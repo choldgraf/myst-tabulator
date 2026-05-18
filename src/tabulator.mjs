@@ -67,14 +67,21 @@ function asNumber(v) {
 }
 
 // Default sorter: numeric if both values parse as numbers (so `$3.50`
-// and `12%` sort the way readers expect)
-function smartSort(a, b) {
+// and `12%` sort the way readers expect). Empty/null cells are always
+// pushed to the bottom regardless of sort direction.
+function smartSort(a, b, aRow, bRow, column, dir) {
+  const aEmpty = a == null || String(a).trim() === '';
+  const bEmpty = b == null || String(b).trim() === '';
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return dir === 'desc' ? -1 : 1;
+  if (bEmpty) return dir === 'desc' ? 1 : -1;
+
   const nA = asNumber(a);
   const nB = asNumber(b);
   if (nA !== null && nB !== null) return nA - nB;
   if (nA !== null) return -1;
   if (nB !== null) return 1;
-  return String(a ?? '').localeCompare(String(b ?? ''));
+  return String(a).localeCompare(String(b));
 }
 
 // Tailwind / theme resets strip the simple theme's input styling once
@@ -110,7 +117,7 @@ async function render({ model, el }) {
 
   // Default columnDefaults:
   //   - formatter:'html' so MyST-rendered <code>/<strong>/etc. display correctly.
-  //   - sorter:smartSort so `$3.50` and `12%` sort numerically rather than alphabetically.
+  //   - sorter:smartSort handles both numeric-with-units and the empty-at-bottom rule.
   const options = {
     ...userOptions,
     columnDefaults: {

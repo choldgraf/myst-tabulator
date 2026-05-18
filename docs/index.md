@@ -110,10 +110,13 @@ Tabulator's Ctrl+C shortcut works too when the table has focus.
 :::
 ::::
 
-## Sorting numbers with units
+## Sorting
 
-Tabulator auto-detects column types from cell content.
-Numbers formatted with a currency symbol (`$3.50`) or percent (`12%`) are detected as strings, so clicking the header sorts them alphabetically - try sorting the Price or Tax columns below.
+Click a column header to sort.
+By default the plugin handles two cases that Tabulator's stock sorter doesn't:
+
+- **Numbers with units** like `$3.50` or `12%` sort numerically rather than alphabetically.
+- **Empty / null cells** always go to the bottom of the column regardless of direction (ascending or descending).
 
 ::::{myst:demo}
 :::{tabulator}
@@ -126,13 +129,15 @@ Numbers formatted with a currency symbol (`$3.50`) or percent (`12%`) are detect
 | Product | Price | Tax |
 |---------|-------|-----|
 | Apples | $0.99 | 5% |
-| Bread | $3.50 | 0% |
+| Bread | $3.50 |  |
 | Milk | $4.25 | 5% |
 | Eggs | $5.99 | 12% |
 | Cheese | $12.00 | 8% |
-| Olive oil | $24.50 | 8% |
+| Olive oil | $24.50 |  |
 :::
 ::::
+
+You can override the sorter through `:tabulator-options:` — for example `{"columnDefaults": {"sorter": "string"}}` for plain alphabetic sort, or `{"columnDefaults": {"sorter": "number"}}` to use Tabulator's built-in number sorter (handles commas but not currency or percent symbols).
 
 ## Raw Tabulator options
 
