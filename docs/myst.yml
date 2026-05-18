@@ -1,0 +1,14 @@
+version: 1
+project:
+  id: myst-tabulator
+  title: myst-tabulator
+  plugins:
+    - ../src/tabulator.mjs
+    - https://raw.githubusercontent.com/jupyter-book/myst-plugins/main/plugins/demo/src/index.mjs
+  toc:
+    - file: index.md
+
+site:
+  template: book-theme
+  options:
+    logo_text: myst-tabulator
