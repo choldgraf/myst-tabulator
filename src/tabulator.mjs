@@ -52,6 +52,31 @@ function normalizeTable(table) {
   }
 }
 
+// Tolerant number parser: returns null if the value isn't number-like,
+// after stripping currency symbols ($), percent signs, thousands
+// separators, and surrounding whitespace.
+// This is necessary so we can sort numeric columns w/ these special characters.
+function asNumber(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const cleaned = s.replace(/[^\d.\-+eE]/g, '');
+  if (!cleaned || cleaned === '-' || cleaned === '+' || cleaned === '.') return null;
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+// Default sorter: numeric if both values parse as numbers (so `$3.50`
+// and `12%` sort the way readers expect)
+function smartSort(a, b) {
+  const nA = asNumber(a);
+  const nB = asNumber(b);
+  if (nA !== null && nB !== null) return nA - nB;
+  if (nA !== null) return -1;
+  if (nB !== null) return 1;
+  return String(a ?? '').localeCompare(String(b ?? ''));
+}
+
 // Tailwind / theme resets strip the simple theme's input styling once
 // Tabulator is in light DOM, leaving header-filter inputs invisible.
 const FILTER_INPUT_CSS = `
@@ -83,12 +108,16 @@ async function render({ model, el }) {
   const exclude = (model.get('exclude') || '').trim();
   const userOptions = model.get('options') || {};
 
-  // Default to HTML cell rendering so MyST-rendered <code>, <strong>, etc.
-  // display correctly. Pandas cells are plain text, so this is a no-op for
-  // jupyter outputs. User-supplied columnDefaults still override.
+  // Default columnDefaults:
+  //   - formatter:'html' so MyST-rendered <code>/<strong>/etc. display correctly.
+  //   - sorter:smartSort so `$3.50` and `12%` sort numerically rather than alphabetically.
   const options = {
     ...userOptions,
-    columnDefaults: { formatter: 'html', ...(userOptions.columnDefaults || {}) },
+    columnDefaults: {
+      formatter: 'html',
+      sorter: smartSort,
+      ...(userOptions.columnDefaults || {}),
+    },
   };
 
   // Tabulator runs on light-DOM tables, so the stylesheet has to live in

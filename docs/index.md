@@ -110,6 +110,30 @@ Tabulator's Ctrl+C shortcut works too when the table has focus.
 :::
 ::::
 
+## Sorting numbers with units
+
+Tabulator auto-detects column types from cell content.
+Numbers formatted with a currency symbol (`$3.50`) or percent (`12%`) are detected as strings, so clicking the header sorts them alphabetically - try sorting the Price or Tax columns below.
+
+::::{myst:demo}
+:::{tabulator}
+:selector-include: .ex-currency table
+:::
+
+:::{div}
+:class: ex-currency
+
+| Product | Price | Tax |
+|---------|-------|-----|
+| Apples | $0.99 | 5% |
+| Bread | $3.50 | 0% |
+| Milk | $4.25 | 5% |
+| Eggs | $5.99 | 12% |
+| Cheese | $12.00 | 8% |
+| Olive oil | $24.50 | 8% |
+:::
+::::
+
 ## Raw Tabulator options
 
 Pass any other Tabulator constructor option through `:tabulator-options:` as a one-line JSON string.
