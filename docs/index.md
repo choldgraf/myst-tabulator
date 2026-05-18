@@ -1,6 +1,6 @@
 # myst-tabulator
 
-Turn any labeled MyST table into an interactive, sortable, searchable one powered by [tabulator.js](https://tabulator.info).
+See [Jupyter outputs](jupyter.md) for live `{code-cell}` examples with pandas DataFrames.
 
 ## How to use it
 
@@ -12,15 +12,36 @@ project:
     - https://raw.githubusercontent.com/choldgraf/myst-tabulator/main/src/tabulator.mjs
 ```
 
-Label a MyST table and drop `:::{tabulator} <label> :::` wherever you want the interactive version - the original renders normally without JavaScript and is hidden when JavaScript is on.
+Add the directive once per page and it will enhance **all HTML tables in the content section of the page**:
 
-## Minimal example
+````
+:::{tabulator}
+:::
+````
 
-The default behavior gives you click-to-sort headers. Add `:search:` to opt into a global search input that filters across all columns.
+## Scoping
+
+To only enhance subsets of HTML tables, use `:selector-include:` / `:selector-exclude:` options.
+In this case, multiple `{tabulator}` directives can coexist on one page; each table is enhanced once (first match wins).
+
+```
+:::{tabulator}
+:selector-include: .my-data table
+:::
+```
+
+## What gets enhanced
+
+Every `<table>` inside `article.article` or `main` — MyST tables, `{table}` directives, `{list-table}` outputs, and the HTML tables that pandas emits in code-cell outputs.
 
 ::::{myst:demo}
-:::{table}
-:label: pkgs-minimal
+:::{tabulator}
+:selector-include: .ex-basic table
+:header-filter:
+:::
+
+:::{div}
+:class: ex-basic
 
 | Package | Language | Description |
 |---------|----------|-------------|
@@ -33,19 +54,22 @@ The default behavior gives you click-to-sort headers. Add `:search:` to opt into
 | Dask | Python | Parallel computing |
 | Xarray | Python | Labeled N-d arrays |
 :::
-
-:::{tabulator} pkgs-minimal
-:search:
-:::
 ::::
 
-## With pagination
+## Pagination
 
-Pass `:pagination:` and (optionally) `:page-size:` to enable client-side pagination.
+Add `:pagination:` (and optionally `:page-size:`) for client-side pagination.
 
 ::::{myst:demo}
-:::{table} A longer table
-:label: pkgs-paginated
+:::{tabulator}
+:selector-include: .ex-paged table
+:pagination:
+:page-size: 5
+:header-filter:
+:::
+
+:::{div}
+:class: ex-paged
 
 | Package | Language | Description |
 |---------|----------|-------------|
@@ -60,54 +84,52 @@ Pass `:pagination:` and (optionally) `:page-size:` to enable client-side paginat
 | Plotly | Python | Interactive plotting |
 | Altair | Python | Grammar-of-graphics |
 :::
-
-:::{tabulator} pkgs-paginated
-:pagination:
-:page-size: 5
-:search:
-:::
-::::
-
-## With per-column header filters
-
-`:header-filter:` puts an input below each column header that filters that column independently. Use it instead of `:search:` when you want column-specific filtering.
-
-::::{myst:demo}
-:::{tabulator} pkgs-minimal
-:header-filter:
-:::
 ::::
 
 ## Copy to clipboard
 
-Add `:copy:` to expose a "Copy" button that writes the currently visible rows (after any search/filter) to the clipboard, with column headers, as tab-separated values - paste-friendly for spreadsheets.
+Add `:copy:` to show a "Copy" button in the table footer.
+It writes the currently visible rows (with headers, tab-separated) to the clipboard — paste-friendly for spreadsheets.
+Tabulator's Ctrl+C shortcut works too when the table has focus.
 
 ::::{myst:demo}
-:::{tabulator} pkgs-minimal
-:search:
+:::{tabulator}
+:selector-include: .ex-copy table
 :copy:
+:::
+
+:::{div}
+:class: ex-copy
+
+| Package | Language | Description |
+|---------|----------|-------------|
+| pandas | Python | Data analysis |
+| NumPy | Python | Numerical computing |
+| SciPy | Python | Scientific computing |
+| Polars | Rust/Python | Fast dataframes |
 :::
 ::::
 
 ## Raw Tabulator options
 
-Anything not exposed as a named option can be passed verbatim through `:tabulator-options:` as a JSON string (one line). Power-user features (column grouping, movable columns, frozen columns, custom formatters, …) live here.
+Pass any other Tabulator constructor option through `:tabulator-options:` as a one-line JSON string.
 
-::::{myst:demo}
-:::{tabulator} pkgs-minimal
+```
+:::{tabulator}
 :tabulator-options: {"movableColumns": true, "layout": "fitColumns"}
 :::
-::::
+```
 
 ## Option reference
 
 | Option | Type | Effect |
 |---|---|---|
+| `:selector-include:` | CSS selector | Tables to enhance. Default: article-body tables. |
+| `:selector-exclude:` | CSS selector | Tables to skip. |
 | `:pagination:` | flag | Enable local pagination. |
 | `:page-size: N` | number | Rows per page (with `:pagination:`). |
 | `:header-filter:` | flag | Add a filter input under each column header. |
+| `:copy:` | flag | Show a "Copy" button in the table footer. |
 | `:layout: <mode>` | string | Tabulator layout (`fitColumns`, `fitData`, `fitDataFill`, …). |
-| `:search:` | flag | Show a global search input above the table. |
-| `:copy:` | flag | Show a "Copy" button. |
 | `:no-sort:` | flag | Disable click-to-sort on headers. |
 | `:tabulator-options:` | JSON string | Merged into the Tabulator constructor (last-write-wins). |

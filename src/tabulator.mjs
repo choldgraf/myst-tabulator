@@ -1,205 +1,214 @@
 /**
- * MyST plugin + anywidget module for tabulator.
- *
- * Single file, two roles:
- *   1. MyST plugin (Node, build-time) - defines the {tabulator} directive
- *   2. anywidget ESM (browser, page-load) - renders the interactive table
- *
- * At build time the directive emits an `anywidget` node carrying the target
- * label and a Tabulator options blob. At render time the widget deep-clones
- * the labeled element into its shadow-DOM container, hides the original, and
- * runs Tabulator on the clone - keeping all DOM mutation inside a React-safe
- * island.
+ * MyST plugin + anywidget for tabulator. Scans the article body and runs
+ * Tabulator on each <table> in place — same light-DOM enhancement pattern
+ * (and React-clobbering trade-off) as myst-lightbox and myst-searchfilter.
  */
 
-// Dynamic import (not static) because this file is also evaluated in the
-// browser, where `node:path` can't be resolved.
+// Dynamic import because this file is also evaluated in the browser, where
+// `node:path` can't be resolved.
 let pathMod;
 try { pathMod = await import('node:path'); } catch {}
 const PLUGIN_PATH = new URL(import.meta.url).pathname;
 
 const TABULATOR_VERSION = '6.3.1';
-// `tabulator_simple` is the most neutral theme Tabulator ships - thin borders,
-// no gradients - which sits well next to MyST's Tailwind chrome.
 const TABULATOR_CSS_URL = `https://cdn.jsdelivr.net/npm/tabulator-tables@${TABULATOR_VERSION}/dist/css/tabulator_simple.min.css`;
 const TABULATOR_ESM_URL = `https://cdn.jsdelivr.net/npm/tabulator-tables@${TABULATOR_VERSION}/+esm`;
 
-// Map MyST-flavored directive options into a Tabulator constructor options
-// object. `extra` (parsed `:tabulator-options:` JSON) is merged last so power
-// users can override anything we set by default.
-function buildOptions(directiveOptions, extra) {
-  const opts = {};
-  const colDefaults = {};
+// Default scope: article content only, so theme chrome isn't enhanced.
+const DEFAULT_INCLUDE = 'article.article table, main table';
 
-  if (directiveOptions.pagination) opts.pagination = 'local';
-  if (typeof directiveOptions['page-size'] === 'number') {
-    opts.paginationSize = directiveOptions['page-size'];
+// Normalize a <table> for Tabulator's HTML import:
+//   1. Ensure a <thead> exists (MyST puts everything in <tbody>).
+//   2. Collapse multi-row <thead> to the last row (pandas MultiIndex
+//      headers use colspan/rowspan that Tabulator can't parse — without
+//      this you get phantom columns).
+//   3. Convert <th> cells in <tbody> to <td>. Pandas uses <th> for the
+//      row-index column (describe(), groupby); Tabulator treats those
+//      as extra header columns, which drops data and adds phantoms.
+function normalizeTable(table) {
+  if (!table.tHead) {
+    const firstRow = table.querySelector('tr');
+    if (firstRow) {
+      const thead = document.createElement('thead');
+      thead.appendChild(firstRow);
+      table.insertBefore(thead, table.firstChild);
+    }
   }
-  if (directiveOptions['header-filter']) colDefaults.headerFilter = 'input';
-  if (directiveOptions['no-sort']) colDefaults.headerSort = false;
-  if (directiveOptions.layout) opts.layout = directiveOptions.layout;
-  if (directiveOptions.copy) {
-    opts.clipboard = 'copy';
-    opts.clipboardCopyRowRange = 'active';
-    opts.clipboardCopyConfig = { columnHeaders: true };
+  if (table.tHead) {
+    while (table.tHead.rows.length > 1) table.tHead.deleteRow(0);
   }
-  if (Object.keys(colDefaults).length > 0) opts.columnDefaults = colDefaults;
-  if (extra) Object.assign(opts, extra);
-
-  return opts;
+  for (const tbody of table.tBodies) {
+    for (const row of tbody.rows) {
+      for (let i = row.cells.length - 1; i >= 0; i--) {
+        const cell = row.cells[i];
+        if (cell.tagName === 'TH') {
+          const td = document.createElement('td');
+          td.innerHTML = cell.innerHTML;
+          for (const attr of cell.attributes) td.setAttribute(attr.name, attr.value);
+          row.replaceChild(td, cell);
+        }
+      }
+    }
+  }
 }
 
-function inlineError(el, message) {
-  const div = document.createElement('div');
-  div.style.cssText =
-    'color:#a00;padding:0.4rem 0.6rem;font-size:0.9rem;border:1px solid #fcc;border-radius:4px;background:#fff5f5;';
-  div.textContent = `tabulator: ${message}`;
-  el.appendChild(div);
-}
+// Tailwind / theme resets strip the simple theme's input styling once
+// Tabulator is in light DOM, leaving header-filter inputs invisible.
+const FILTER_INPUT_CSS = `
+  .tabulator .tabulator-header-filter input,
+  .tabulator .tabulator-header-filter select {
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    padding: 2px 4px;
+    background: #fff;
+    color: #111;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tabulator .myst-tab-copy {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.85rem;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    background: #fff;
+    color: #111;
+    cursor: pointer;
+  }
+`;
 
 async function render({ model, el }) {
-  const tableId = (model.get('tableId') ?? '').trim();
-  const rawOptions = { ...(model.get('options') || {}) };
-  const showSearch = !!model.get('search');
-  const showCopy = !!model.get('copy');
+  el.style.display = 'none';
 
-  // Reset the UA-default figure margin so toolbar controls align with the
-  // table's left edge. Page CSS can't cross the shadow boundary, but the
-  // browser default (margin: 1em 40px) still applies.
-  const style = document.createElement('style');
-  style.textContent = 'figure{margin:0;}';
-  el.appendChild(style);
+  const include = (model.get('include') || '').trim() || DEFAULT_INCLUDE;
+  const exclude = (model.get('exclude') || '').trim();
+  const userOptions = model.get('options') || {};
 
-  if (!tableId) {
-    inlineError(el, 'missing target id - write `:::{tabulator} my-label :::`');
-    return;
+  // Default to HTML cell rendering so MyST-rendered <code>, <strong>, etc.
+  // display correctly. Pandas cells are plain text, so this is a no-op for
+  // jupyter outputs. User-supplied columnDefaults still override.
+  const options = {
+    ...userOptions,
+    columnDefaults: { formatter: 'html', ...(userOptions.columnDefaults || {}) },
+  };
+
+  // Tabulator runs on light-DOM tables, so the stylesheet has to live in
+  // document.head — the anywidget's shadow CSS doesn't reach them.
+  if (!document.querySelector('link[data-myst-tabulator]')) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = TABULATOR_CSS_URL;
+    link.dataset.mystTabulator = '1';
+    document.head.appendChild(link);
+  }
+  if (!document.querySelector('style[data-myst-tabulator]')) {
+    const style = document.createElement('style');
+    style.dataset.mystTabulator = '1';
+    style.textContent = FILTER_INPUT_CSS;
+    document.head.appendChild(style);
   }
 
-  const orig = document.getElementById(tableId);
-  if (!orig) {
-    inlineError(el, `no element with id "${tableId}" on the page`);
-    return;
-  }
-
-  // Deep-clone into our shadow-DOM-safe container; React keeps owning the
-  // original node. Force `display:''` so a clone made after an earlier widget
-  // already hid the original isn't blank.
-  const clone = orig.cloneNode(true);
-  clone.removeAttribute('id');
-  clone.style.display = '';
-  orig.style.display = 'none';
-
-  const tableEl =
-    clone.tagName === 'TABLE' ? clone : clone.querySelector('table');
-  if (!tableEl) {
-    inlineError(el, `no <table> found inside #${tableId}`);
-    return;
-  }
-
-  // Toolbar (built first so the layout doesn't jump when Tabulator loads).
-  let searchInput, copyButton;
-  if (showSearch || showCopy) {
-    const toolbar = document.createElement('div');
-    toolbar.style.cssText =
-      'display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem 0;';
-
-    if (showSearch) {
-      const wrapper = document.createElement('div');
-      wrapper.style.cssText = 'flex:0 1 24rem;position:relative;';
-      searchInput = document.createElement('input');
-      searchInput.type = 'search';
-      searchInput.placeholder = 'Search…';
-      searchInput.style.cssText =
-        'width:100%;padding:0.4rem 0.6rem;font-size:0.9rem;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;';
-      wrapper.appendChild(searchInput);
-      toolbar.appendChild(wrapper);
-    }
-
-    if (showCopy) {
-      copyButton = document.createElement('button');
-      copyButton.type = 'button';
-      copyButton.textContent = 'Copy';
-      copyButton.style.cssText =
-        'padding:0.4rem 0.8rem;font-size:0.9rem;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;';
-      toolbar.appendChild(copyButton);
-    }
-
-    el.appendChild(toolbar);
-  }
-  el.appendChild(clone);
-
+  // Tabulator destroys the original <table> element when it enhances it,
+  // so a dataset marker doesn't survive. Track enhanced elements in a
+  // WeakSet keyed on the element we hand to Tabulator.
+  const enhanced = new WeakSet();
   let mod;
+
+  function enhanceMatching() {
+    if (!mod) return;
+    const tables = document.querySelectorAll(include);
+    const excluded = exclude ? new Set(document.querySelectorAll(exclude)) : null;
+    for (const table of tables) {
+      if (excluded?.has(table)) continue;
+      if (enhanced.has(table)) continue;
+      enhanced.add(table);
+      try {
+        normalizeTable(table);
+
+        // If :copy: is enabled, build the button as a real DOM element so
+        // we can keep a stable reference to it (Tabulator may swap out
+        // `t.element` while it constructs, but it places the footerElement
+        // node verbatim — no clone).
+        let copyBtn = null;
+        const tableOptions = { ...options };
+        if (tableOptions.clipboard === 'copy') {
+          copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.className = 'myst-tab-copy';
+          copyBtn.textContent = 'Copy';
+          tableOptions.footerElement = copyBtn;
+        }
+
+        const t = new mod.TabulatorFull(table, tableOptions);
+
+        if (copyBtn) {
+          let resetTimer;
+          copyBtn.addEventListener('click', async () => {
+            clearTimeout(resetTimer);
+            try {
+              await t.copyToClipboard();
+              copyBtn.textContent = 'Copied!';
+            } catch {
+              copyBtn.textContent = 'Copy failed';
+            }
+            resetTimer = setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          });
+        }
+      } catch (err) {
+        console.warn('myst-tabulator: failed to enhance', table, err);
+      }
+    }
+  }
+
+  // Catch tables added after our initial pass (thebe attaches code-cell
+  // outputs asynchronously). MutationObserver is the fast path; the
+  // timed retries are a belt-and-suspenders for cases where the observer
+  // misses the addition (e.g. shadow-DOM-scoped mutations).
+  let scheduled = false;
+  const observer = new MutationObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => { scheduled = false; enhanceMatching(); });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
   try {
     mod = await import(TABULATOR_ESM_URL);
   } catch (err) {
-    inlineError(el, `failed to load Tabulator - ${err.message}`);
+    console.warn('myst-tabulator: failed to load Tabulator', err);
     return;
   }
-
-  let t;
-  try {
-    t = new mod.TabulatorFull(tableEl, rawOptions);
-  } catch (err) {
-    inlineError(el, `Tabulator init failed - ${err.message}`);
-    return;
-  }
-
-  if (showSearch) {
-    searchInput.addEventListener('input', () => {
-      const q = searchInput.value.trim().toLowerCase();
-      if (!q) return t.clearFilter();
-      t.setFilter((row) =>
-        Object.values(row).some(
-          (v) => v != null && String(v).toLowerCase().includes(q),
-        ),
-      );
-    });
-  }
-
-  if (showCopy) {
-    const original = copyButton.textContent;
-    let resetTimer;
-    copyButton.addEventListener('click', async () => {
-      clearTimeout(resetTimer);
-      try {
-        await t.copyToClipboard();
-        copyButton.textContent = 'Copied!';
-      } catch {
-        copyButton.textContent = 'Copy failed';
-      }
-      resetTimer = setTimeout(() => {
-        copyButton.textContent = original;
-      }, 1500);
-    });
-  }
+  enhanceMatching();
+  for (const delay of [500, 1500, 4000]) setTimeout(enhanceMatching, delay);
 }
 
 const tabulatorDirective = {
   name: 'tabulator',
-  doc: 'Render a labeled MyST table as an interactive Tabulator table.',
-  arg: {
-    type: String,
-    doc: 'The label of the table to enhance (the `:label:` on a `{table}` directive). A leading `#` is stripped.',
-  },
+  doc: 'Enhance every <table> in the article body with Tabulator. Scope with :selector-include: / :selector-exclude:.',
   options: {
+    'selector-include': {
+      type: String,
+      doc: `CSS selector for tables to enhance. Default: ${DEFAULT_INCLUDE}`,
+    },
+    'selector-exclude': {
+      type: String,
+      doc: 'CSS selector for tables to skip.',
+    },
     pagination: { type: Boolean, doc: 'Enable local pagination.' },
     'page-size': { type: Number, doc: 'Rows per page when pagination is enabled.' },
     'header-filter': { type: Boolean, doc: 'Add a filter input under each column header.' },
+    copy: { type: Boolean, doc: 'Show a "Copy" button (in the table footer) that copies the visible rows to the clipboard.' },
     layout: { type: String, doc: 'Tabulator layout mode (e.g. fitColumns, fitData, fitDataFill).' },
-    search: { type: Boolean, doc: 'Show a global search input above the table that filters across all columns.' },
-    copy: { type: Boolean, doc: 'Show a "Copy" button that copies the currently visible rows (with headers) to the clipboard.' },
     'no-sort': { type: Boolean, doc: 'Disable click-to-sort on column headers.' },
     'tabulator-options': {
       type: String,
-      doc: 'Raw JSON merged into the Tabulator constructor options (last-write-wins over named options).',
+      doc: 'Raw JSON merged into the Tabulator constructor options (last-write-wins).',
     },
   },
   run(data, vfile) {
-    const arg = (data.arg ?? '').trim().replace(/^#/, '');
-    const directiveOptions = data.options ?? {};
+    const opts = data.options ?? {};
 
     let extra;
-    const raw = directiveOptions['tabulator-options'];
+    const raw = opts['tabulator-options'];
     if (raw && raw.trim()) {
       try {
         extra = JSON.parse(raw);
@@ -210,15 +219,30 @@ const tabulatorDirective = {
       }
     }
 
+    const tabulatorOpts = {};
+    const colDefaults = {};
+    if (opts.pagination) tabulatorOpts.pagination = 'local';
+    if (typeof opts['page-size'] === 'number') tabulatorOpts.paginationSize = opts['page-size'];
+    if (opts['header-filter']) colDefaults.headerFilter = 'input';
+    if (opts['no-sort']) colDefaults.headerSort = false;
+    if (opts.layout) tabulatorOpts.layout = opts.layout;
+    if (opts.copy) {
+      tabulatorOpts.clipboard = 'copy';
+      tabulatorOpts.clipboardCopyRowRange = 'active';
+      tabulatorOpts.clipboardCopyConfig = { columnHeaders: true };
+      // footerElement is built per-table in render() so we can keep a live
+      // reference to the actual button for wiring.
+    }
+    if (Object.keys(colDefaults).length > 0) tabulatorOpts.columnDefaults = colDefaults;
+    if (extra) Object.assign(tabulatorOpts, extra);
+
     return [{
       type: 'anywidget',
       esm: pathMod.relative(pathMod.dirname(vfile.path), PLUGIN_PATH),
-      css: TABULATOR_CSS_URL,
       model: {
-        tableId: arg,
-        options: buildOptions(directiveOptions, extra),
-        search: !!directiveOptions.search,
-        copy: !!directiveOptions.copy,
+        include: opts['selector-include'] ?? '',
+        exclude: opts['selector-exclude'] ?? '',
+        options: tabulatorOpts,
       },
       id: crypto.randomUUID(),
     }];

@@ -7,6 +7,7 @@ project:
     - https://raw.githubusercontent.com/jupyter-book/myst-plugins/main/plugins/demo/src/index.mjs
   toc:
     - file: index.md
+    - file: jupyter.md
 
 site:
   template: book-theme
