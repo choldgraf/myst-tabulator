@@ -86,6 +86,35 @@ Add `:pagination:` (and optionally `:page-size:`) for client-side pagination.
 :::
 ::::
 
+## Search
+
+Add `:search:` to show a single search input above the table.
+Typing filters rows by matching the query against every column (case-insensitive substring).
+The current query is mirrored to the `?tablesearch=` URL parameter, so a filtered view can be shared by copying the URL.
+
+`:header-filter:` serves a similar purpose, but is per-column and doesn't use the URL search parameter.
+
+::::{myst:demo}
+:::{tabulator}
+:selector-include: .ex-search table
+:search:
+:header-filter:
+:::
+
+:::{div}
+:class: ex-search
+
+| Package | Language | Description |
+|---------|----------|-------------|
+| pandas | Python | Data analysis |
+| NumPy | Python | Numerical computing |
+| SciPy | Python | Scientific computing |
+| Polars | Rust/Python | Fast dataframes |
+| Dask | Python | Parallel computing |
+| Plotly | Python | Interactive plotting |
+:::
+::::
+
 ## Copy to clipboard
 
 Add `:copy:` to show a "Copy" button in the table footer.
@@ -95,6 +124,7 @@ Tabulator's Ctrl+C shortcut works too when the table has focus.
 ::::{myst:demo}
 :::{tabulator}
 :selector-include: .ex-copy table
+:search:
 :copy:
 :::
 
@@ -183,6 +213,7 @@ Pass any other Tabulator constructor option through `:tabulator-options:` as a o
 | `:pagination:` | flag | Enable local pagination. |
 | `:page-size: N` | number | Rows per page (with `:pagination:`). |
 | `:header-filter:` | flag | Add a filter input under each column header. |
+| `:search:` | flag | Show a single search input above the table; filters across all columns. Synced to `?tablesearch=`. |
 | `:copy:` | flag | Show a "Copy" button in the table footer. |
 | `:summary: <stat>` | string | Bottom-row calc per column: `sum`, `avg`, `min`, `max`, `count`, `concat`. |
 | `:layout: <mode>` | string | Tabulator layout (`fitColumns`, `fitData`, `fitDataFill`, …). |

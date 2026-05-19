@@ -111,9 +111,10 @@ function smartSort(a, b, aRow, bRow, column, dir) {
   return String(a).localeCompare(String(b));
 }
 
-// Tailwind / theme resets strip the simple theme's input styling once
-// Tabulator is in light DOM, leaving header-filter inputs invisible.
+// This enforces some visual styles so that the theme doesn't clobber them
+// Mostly this is over-riding defaults in the myst-theme's tailwind.
 const FILTER_INPUT_CSS = `
+  /* Header-filter inputs lose their borders/background under Tailwind resets. */
   .tabulator .tabulator-header-filter input,
   .tabulator .tabulator-header-filter select {
     border: 1px solid #aaa;
@@ -124,21 +125,34 @@ const FILTER_INPUT_CSS = `
     width: 100%;
     box-sizing: border-box;
   }
+  /* Tabulator marks calc rows (summary totals) as non-selectable; re-enable
+     so readers can highlight/copy the totals like any other cell. */
   .tabulator-row.tabulator-calcs {
     user-select: text;
   }
+  /* Single right-aligned toolbar above the table; holds search input and/or
+     Copy button so they share one row instead of stacking. */
+  .myst-tab-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 0.4rem;
+  }
+  /* Shared visuals for the search input and Copy button — same reset reason
+     as the header-filter rule above. */
+  .myst-tab-search,
   .myst-tab-copy {
-    display: block;
-    width: fit-content;
-    margin: 0 0 0.4rem auto;
-    padding: 0.3rem 0.7rem;
     font-size: 0.85rem;
     border: 1px solid #aaa;
     border-radius: 4px;
     background: #fff;
     color: #111;
-    cursor: pointer;
   }
+  /* Slightly tighter horizontal padding for the input vs. the button. */
+  .myst-tab-search { padding: 0.3rem 0.5rem; }
+  /* Wider padding + pointer cursor to read as a clickable button. */
+  .myst-tab-copy { padding: 0.3rem 0.7rem; cursor: pointer; }
 `;
 
 async function render({ model, el }) {
@@ -147,6 +161,7 @@ async function render({ model, el }) {
   const include = (model.get('include') || '').trim() || DEFAULT_INCLUDE;
   const exclude = (model.get('exclude') || '').trim();
   const userOptions = model.get('options') || {};
+  const searchEnabled = !!model.get('search');
 
   // Default columnDefaults:
   //   - formatter:'html' so MyST-rendered <code>/<strong>/etc. display correctly.
@@ -186,6 +201,9 @@ async function render({ model, el }) {
   // render() calls don't re-enhance the same table.
   let mod;
 
+  // Find every matching <table>, hand it to Tabulator, and attach our chrome
+  // (toolbar with search/copy). Safe to call repeatedly — the WeakSet skips
+  // tables we've already enhanced.
   function enhanceMatching() {
     if (!mod) return;
     const tables = document.querySelectorAll(include);
@@ -198,25 +216,70 @@ async function render({ model, el }) {
         normalizeTable(table);
         const t = new mod.TabulatorFull(table, options);
 
-        // Place the Copy button as a sibling above Tabulator's wrapper
-        const hasButton = t.element.previousElementSibling?.classList.contains('myst-tab-copy');
-        if (options.clipboard === 'copy' && !hasButton) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'myst-tab-copy';
-          btn.textContent = 'Copy';
-          let resetTimer;
-          btn.addEventListener('click', async () => {
-            clearTimeout(resetTimer);
-            try {
-              await t.copyToClipboard();
-              btn.textContent = 'Copied!';
-            } catch {
-              btn.textContent = 'Copy failed';
+        // Right-aligned toolbar above the wrapper holds search input and/or
+        // Copy button. `hasToolbar` guards against re-attaching after
+        // something has already been attached so they don't stack.
+        const hasToolbar = t.element.previousElementSibling?.classList.contains('myst-tab-toolbar');
+        if ((searchEnabled || options.clipboard === 'copy') && !hasToolbar) {
+          const toolbar = document.createElement('div');
+          toolbar.className = 'myst-tab-toolbar';
+
+          if (searchEnabled) {
+            // Omni-search: case-insensitive substring match across every
+            // column. Query is mirrored to ?tablesearch= so a filtered view
+            // can be shared by copying the URL, and seeded from it on load.
+            const input = document.createElement('input');
+            input.type = 'search';
+            input.className = 'myst-tab-search';
+            input.placeholder = 'Search…';
+            const apply = q => {
+              if (!q) return t.clearFilter();
+              const needle = q.toLowerCase();
+              t.setFilter(row => t.getColumns().some(col => {
+                const field = col.getField();
+                if (!field) return false;
+                const v = row[field];
+                return v != null && String(v).toLowerCase().includes(needle);
+              }));
+            };
+            // Filters + updates the search parameter as you type
+            input.addEventListener('input', () => {
+              const q = input.value.trim();
+              apply(q);
+              const url = new URL(window.location.href);
+              if (q) url.searchParams.set('tablesearch', q);
+              else url.searchParams.delete('tablesearch');
+              history.replaceState(null, '', url);
+            });
+            const initial = new URLSearchParams(window.location.search).get('tablesearch') ?? '';
+            if (initial) {
+              input.value = initial;
+              apply(initial);
             }
-            resetTimer = setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-          });
-          t.element.insertAdjacentElement('beforebegin', btn);
+            toolbar.appendChild(input);
+          }
+
+          if (options.clipboard === 'copy') {
+            // Copy button: writes the currently-visible rows to the clipboard
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'myst-tab-copy';
+            btn.textContent = 'Copy';
+            let resetTimer;
+            btn.addEventListener('click', async () => {
+              clearTimeout(resetTimer);
+              try {
+                await t.copyToClipboard();
+                btn.textContent = 'Copied!';
+              } catch {
+                btn.textContent = 'Copy failed';
+              }
+              resetTimer = setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+            });
+            toolbar.appendChild(btn);
+          }
+
+          t.element.insertAdjacentElement('beforebegin', toolbar);
         }
       } catch (err) {
         console.warn('myst-tabulator: failed to enhance', table, err);
@@ -261,6 +324,7 @@ const tabulatorDirective = {
     pagination: { type: Boolean, doc: 'Enable local pagination.' },
     'page-size': { type: Number, doc: 'Rows per page when pagination is enabled.' },
     'header-filter': { type: Boolean, doc: 'Add a filter input under each column header.' },
+    search: { type: Boolean, doc: 'Show a single search input above the table that filters rows across every column. Synced to/from the ?tablesearch= URL parameter.' },
     copy: { type: Boolean, doc: 'Show a "Copy" button above the table that copies the visible rows to the clipboard.' },
     summary: { type: String, doc: 'Show a bottom row with a calculated value per column. One of: sum, avg, min, max, count, concat.' },
     layout: { type: String, doc: 'Tabulator layout mode (e.g. fitColumns, fitData, fitDataFill).' },
@@ -324,6 +388,7 @@ const tabulatorDirective = {
         exclude: opts['selector-exclude'] ?? '',
         options: tabulatorOpts,
         summary: opts.summary ?? '',
+        search: !!opts.search,
       },
       id: crypto.randomUUID(),
     }];
