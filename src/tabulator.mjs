@@ -66,6 +66,26 @@ function asNumber(v) {
   return isNaN(n) ? null : n;
 }
 
+// Numeric reducers for :summary: option. Tabulator's built-in sum/avg/min/max
+// only handle raw numbers; these go through asNumber() so currency- and
+// percent-formatted columns total up correctly. `count` and `concat` fall
+// back to Tabulator's stock implementations (they work on any data).
+const SUMMARY_REDUCERS = {
+  sum: ns => ns.reduce((a, b) => a + b, 0),
+  avg: ns => ns.reduce((a, b) => a + b, 0) / ns.length,
+  min: ns => Math.min(...ns),
+  max: ns => Math.max(...ns),
+};
+function summaryCalc(kind) {
+  if (kind === 'count' || kind === 'concat') return kind;
+  const reducer = SUMMARY_REDUCERS[kind];
+  if (!reducer) return null;
+  return values => {
+    const nums = values.map(asNumber).filter(n => n !== null);
+    return nums.length ? Math.round(reducer(nums) * 100) / 100 : '';
+  };
+}
+
 // Default sorter: numeric if both values parse as numbers (so `$3.50`
 // and `12%` sort the way readers expect). Empty/null cells are always
 // pushed to the bottom regardless of sort direction.
@@ -97,7 +117,10 @@ const FILTER_INPUT_CSS = `
     width: 100%;
     box-sizing: border-box;
   }
-  .tabulator .myst-tab-copy {
+  .myst-tab-copy {
+    display: block;
+    width: fit-content;
+    margin: 0.4rem 0 0.4rem auto;
     padding: 0.3rem 0.7rem;
     font-size: 0.85rem;
     border: 1px solid #aaa;
@@ -118,11 +141,15 @@ async function render({ model, el }) {
   // Default columnDefaults:
   //   - formatter:'html' so MyST-rendered <code>/<strong>/etc. display correctly.
   //   - sorter:smartSort handles both numeric-with-units and the empty-at-bottom rule.
+  //   - bottomCalc applied per-column when :summary: is set.
+  const summary = (model.get('summary') || '').trim();
+  const bottomCalc = summary ? summaryCalc(summary) : null;
   const options = {
     ...userOptions,
     columnDefaults: {
       formatter: 'html',
       sorter: smartSort,
+      ...(bottomCalc ? { bottomCalc } : {}),
       ...(userOptions.columnDefaults || {}),
     },
   };
@@ -159,35 +186,29 @@ async function render({ model, el }) {
       enhanced.add(table);
       try {
         normalizeTable(table);
+        const t = new mod.TabulatorFull(table, options);
 
-        // If :copy: is enabled, build the button as a real DOM element so
-        // we can keep a stable reference to it (Tabulator may swap out
-        // `t.element` while it constructs, but it places the footerElement
-        // node verbatim — no clone).
-        let copyBtn = null;
-        const tableOptions = { ...options };
-        if (tableOptions.clipboard === 'copy') {
-          copyBtn = document.createElement('button');
-          copyBtn.type = 'button';
-          copyBtn.className = 'myst-tab-copy';
-          copyBtn.textContent = 'Copy';
-          tableOptions.footerElement = copyBtn;
-        }
-
-        const t = new mod.TabulatorFull(table, tableOptions);
-
-        if (copyBtn) {
+        // Place the Copy button as a sibling of Tabulator's wrapper rather
+        // than via footerElement. Inside Tabulator's chrome the button's
+        // click triggers a footer-area re-render that wipes the bottomCalc
+        // row; outside it, the calc row is untouched.
+        if (options.clipboard === 'copy') {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'myst-tab-copy';
+          btn.textContent = 'Copy';
           let resetTimer;
-          copyBtn.addEventListener('click', async () => {
+          btn.addEventListener('click', async () => {
             clearTimeout(resetTimer);
             try {
               await t.copyToClipboard();
-              copyBtn.textContent = 'Copied!';
+              btn.textContent = 'Copied!';
             } catch {
-              copyBtn.textContent = 'Copy failed';
+              btn.textContent = 'Copy failed';
             }
-            resetTimer = setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            resetTimer = setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
           });
+          t.element.insertAdjacentElement('afterend', btn);
         }
       } catch (err) {
         console.warn('myst-tabulator: failed to enhance', table, err);
@@ -233,6 +254,7 @@ const tabulatorDirective = {
     'page-size': { type: Number, doc: 'Rows per page when pagination is enabled.' },
     'header-filter': { type: Boolean, doc: 'Add a filter input under each column header.' },
     copy: { type: Boolean, doc: 'Show a "Copy" button (in the table footer) that copies the visible rows to the clipboard.' },
+    summary: { type: String, doc: 'Show a bottom row with a calculated value per column. One of: sum, avg, min, max, count, concat.' },
     layout: { type: String, doc: 'Tabulator layout mode (e.g. fitColumns, fitData, fitDataFill).' },
     'no-sort': { type: Boolean, doc: 'Disable click-to-sort on column headers.' },
     'tabulator-options': {
@@ -272,6 +294,13 @@ const tabulatorDirective = {
     if (Object.keys(colDefaults).length > 0) tabulatorOpts.columnDefaults = colDefaults;
     if (extra) Object.assign(tabulatorOpts, extra);
 
+    const allowedSummary = ['sum', 'avg', 'min', 'max', 'count', 'concat'];
+    if (opts.summary && !allowedSummary.includes(opts.summary)) {
+      vfile.message(
+        `tabulator: :summary: must be one of ${allowedSummary.join('|')}, got "${opts.summary}"`,
+      );
+    }
+
     return [{
       type: 'anywidget',
       esm: pathMod.relative(pathMod.dirname(vfile.path), PLUGIN_PATH),
@@ -279,6 +308,7 @@ const tabulatorDirective = {
         include: opts['selector-include'] ?? '',
         exclude: opts['selector-exclude'] ?? '',
         options: tabulatorOpts,
+        summary: opts.summary ?? '',
       },
       id: crypto.randomUUID(),
     }];

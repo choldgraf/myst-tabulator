@@ -139,6 +139,31 @@ By default the plugin handles two cases that Tabulator's stock sorter doesn't:
 
 You can override the sorter through `:tabulator-options:` — for example `{"columnDefaults": {"sorter": "string"}}` for plain alphabetic sort, or `{"columnDefaults": {"sorter": "number"}}` to use Tabulator's built-in number sorter (handles commas but not currency or percent symbols).
 
+## Summary statistics
+
+Add `:summary: <stat>` to show a calculated row at the bottom of every column.
+Supported values: `sum`, `avg`, `min`, `max`, `count`, `concat`.
+The numeric stats (`sum`, `avg`, `min`, `max`) understand currency and percent formatting, so columns like `$3.50` and `12%` total up correctly; non-numeric columns render an empty cell.
+
+::::{myst:demo}
+:::{tabulator}
+:selector-include: .ex-summary table
+:summary: sum
+:copy:
+:::
+
+:::{div}
+:class: ex-summary
+
+| Product | Price | Quantity |
+|---------|-------|----------|
+| Apples | $0.99 | 12 |
+| Bread | $3.50 | 4 |
+| Milk | $4.25 | 6 |
+| Cheese | $12.00 | 2 |
+:::
+::::
+
 ## Raw Tabulator options
 
 Pass any other Tabulator constructor option through `:tabulator-options:` as a one-line JSON string.
@@ -159,6 +184,7 @@ Pass any other Tabulator constructor option through `:tabulator-options:` as a o
 | `:page-size: N` | number | Rows per page (with `:pagination:`). |
 | `:header-filter:` | flag | Add a filter input under each column header. |
 | `:copy:` | flag | Show a "Copy" button in the table footer. |
+| `:summary: <stat>` | string | Bottom-row calc per column: `sum`, `avg`, `min`, `max`, `count`, `concat`. |
 | `:layout: <mode>` | string | Tabulator layout (`fitColumns`, `fitData`, `fitDataFill`, …). |
 | `:no-sort:` | flag | Disable click-to-sort on headers. |
 | `:tabulator-options:` | JSON string | Merged into the Tabulator constructor (last-write-wins). |
