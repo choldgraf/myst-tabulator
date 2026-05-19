@@ -87,6 +87,12 @@ function summaryCalc(kind) {
   };
 }
 
+// Tracks tables we've already handed to Tabulator. Module-scoped (rather
+// than per-render) so that repeated render() calls — from hot reload,
+// route remounts, anywidget re-renders — don't re-enhance the same DOM
+// elements and stack up duplicate Copy buttons.
+const enhanced = new WeakSet();
+
 // Default sorter: numeric if both values parse as numbers (so `$3.50`
 // and `12%` sort the way readers expect). Empty/null cells are always
 // pushed to the bottom regardless of sort direction.
@@ -173,8 +179,8 @@ async function render({ model, el }) {
 
   // Tabulator destroys the original <table> element when it enhances it,
   // so a dataset marker doesn't survive. Track enhanced elements in a
-  // WeakSet keyed on the element we hand to Tabulator.
-  const enhanced = new WeakSet();
+  // module-scoped WeakSet (declared at the top of the file) so duplicate
+  // render() calls don't re-enhance the same table.
   let mod;
 
   function enhanceMatching() {
@@ -192,8 +198,10 @@ async function render({ model, el }) {
         // Place the Copy button as a sibling of Tabulator's wrapper rather
         // than via footerElement. Inside Tabulator's chrome the button's
         // click triggers a footer-area re-render that wipes the bottomCalc
-        // row; outside it, the calc row is untouched.
-        if (options.clipboard === 'copy') {
+        // row; outside it, the calc row is untouched. Belt-and-suspenders
+        // check for an existing button so a re-run can't stack duplicates.
+        const hasButton = t.element.nextElementSibling?.classList.contains('myst-tab-copy');
+        if (options.clipboard === 'copy' && !hasButton) {
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'myst-tab-copy';
