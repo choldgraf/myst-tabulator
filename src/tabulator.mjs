@@ -52,18 +52,19 @@ function normalizeTable(table) {
   }
 }
 
-// Tolerant number parser: returns null if the value isn't number-like,
-// after stripping currency symbols ($), percent signs, thousands
-// separators, and surrounding whitespace.
-// This is necessary so we can sort numeric columns w/ these special characters.
+// Tolerant number parser: returns null if the value isn't number-like.
+// Strips a leading currency symbol, trailing percent, and thousand-separator
+// commas. Then requires the result to match a real number literal
+// so we don't convert dates etc.
 function asNumber(v) {
   if (v == null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const cleaned = s.replace(/[^\d.\-+eE]/g, '');
-  if (!cleaned || cleaned === '-' || cleaned === '+' || cleaned === '.') return null;
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? null : n;
+  const cleaned = String(v)
+    .trim()
+    .replace(/^([-+]?)[$£€¥₹]/, '$1')
+    .replace(/%$/, '')
+    .replace(/,/g, '');
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(cleaned)) return null;
+  return parseFloat(cleaned);
 }
 
 // Numeric reducers for :summary: option. Tabulator's built-in sum/avg/min/max
@@ -287,9 +288,16 @@ const tabulatorDirective = {
     if (opts.copy) {
       tabulatorOpts.clipboard = 'copy';
       tabulatorOpts.clipboardCopyRowRange = 'active';
-      tabulatorOpts.clipboardCopyConfig = { columnHeaders: true };
-      // footerElement is built per-table in render() so we can keep a live
-      // reference to the actual button for wiring.
+      // Explicit copy config: include headers, exclude everything synthetic
+      // (calc rows, groups, tree summaries) so :summary: totals don't leak
+      // into the clipboard alongside the data rows.
+      tabulatorOpts.clipboardCopyConfig = {
+        columnHeaders: true,
+        columnGroups: false,
+        rowGroups: false,
+        columnCalcs: false,
+        dataTree: false,
+      };
     }
     if (Object.keys(colDefaults).length > 0) tabulatorOpts.columnDefaults = colDefaults;
     if (extra) Object.assign(tabulatorOpts, extra);
