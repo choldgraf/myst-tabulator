@@ -124,6 +124,9 @@ const FILTER_INPUT_CSS = `
     width: 100%;
     box-sizing: border-box;
   }
+  .tabulator-row.tabulator-calcs {
+    user-select: text;
+  }
   .myst-tab-copy {
     display: block;
     width: fit-content;
