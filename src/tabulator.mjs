@@ -130,7 +130,7 @@ const FILTER_INPUT_CSS = `
   .myst-tab-copy {
     display: block;
     width: fit-content;
-    margin: 0.4rem 0 0.4rem auto;
+    margin: 0 0 0.4rem auto;
     padding: 0.3rem 0.7rem;
     font-size: 0.85rem;
     border: 1px solid #aaa;
@@ -198,12 +198,8 @@ async function render({ model, el }) {
         normalizeTable(table);
         const t = new mod.TabulatorFull(table, options);
 
-        // Place the Copy button as a sibling of Tabulator's wrapper rather
-        // than via footerElement. Inside Tabulator's chrome the button's
-        // click triggers a footer-area re-render that wipes the bottomCalc
-        // row; outside it, the calc row is untouched. Belt-and-suspenders
-        // check for an existing button so a re-run can't stack duplicates.
-        const hasButton = t.element.nextElementSibling?.classList.contains('myst-tab-copy');
+        // Place the Copy button as a sibling above Tabulator's wrapper
+        const hasButton = t.element.previousElementSibling?.classList.contains('myst-tab-copy');
         if (options.clipboard === 'copy' && !hasButton) {
           const btn = document.createElement('button');
           btn.type = 'button';
@@ -220,7 +216,7 @@ async function render({ model, el }) {
             }
             resetTimer = setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
           });
-          t.element.insertAdjacentElement('afterend', btn);
+          t.element.insertAdjacentElement('beforebegin', btn);
         }
       } catch (err) {
         console.warn('myst-tabulator: failed to enhance', table, err);
@@ -265,7 +261,7 @@ const tabulatorDirective = {
     pagination: { type: Boolean, doc: 'Enable local pagination.' },
     'page-size': { type: Number, doc: 'Rows per page when pagination is enabled.' },
     'header-filter': { type: Boolean, doc: 'Add a filter input under each column header.' },
-    copy: { type: Boolean, doc: 'Show a "Copy" button (in the table footer) that copies the visible rows to the clipboard.' },
+    copy: { type: Boolean, doc: 'Show a "Copy" button above the table that copies the visible rows to the clipboard.' },
     summary: { type: String, doc: 'Show a bottom row with a calculated value per column. One of: sum, avg, min, max, count, concat.' },
     layout: { type: String, doc: 'Tabulator layout mode (e.g. fitColumns, fitData, fitDataFill).' },
     'no-sort': { type: Boolean, doc: 'Disable click-to-sort on column headers.' },
